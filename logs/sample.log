@@ -1,0 +1,7 @@
+2026-10-10 10:15:02 INFO Login successful from 192.168.1.10
+2026-10-10 10:15:10 WARNING Failed login from 203.0.113.25
+2026-10-10 10:15:12 WARNING Failed login from 203.0.113.25
+2026-10-10 10:15:14 ERROR Database connection failed
+2026-10-10 10:16:01 WARNING Failed login from 203.0.113.25
+2026-10-10 10:16:20 INFO Login successful from 192.168.1.15
+2026-10-10 10:17:00 ERROR Unauthorized access attempt from 198.51.100.42
