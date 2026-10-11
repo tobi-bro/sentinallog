@@ -1,6 +1,6 @@
 
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import re
 import uuid
@@ -9,11 +9,12 @@ from reports.report_generator import save_json_report
 
 
 APP_NAME = "SentinelLog"
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 LOG_FILE = Path("logs/sample.log")
 
 LOG_LEVELS = ("INFO", "WARNING", "ERROR", "UNKNOWN")
 FAILED_LOGIN_THRESHOLD = 3
+FAILED_LOGIN_WINDOW_MINUTES = 5
 
 TIMESTAMP_PATTERN = re.compile(
     r"^\s*(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\s+(.*)$"
@@ -142,13 +143,48 @@ def extract_ip(line):
     return ip_address
 
 
+def find_threshold_event(timestamps):
+    """
+    Find the first threshold-reaching event inside a rolling time window.
+
+    timestamps must contain validated timestamp strings.
+    Returns the threshold event details, or None if no window qualifies.
+    """
+    parsed_timestamps = sorted(
+        (
+            datetime.strptime(value, "%Y-%m-%d %H:%M:%S"),
+            value,
+        )
+        for value in timestamps
+    )
+
+    window = timedelta(minutes=FAILED_LOGIN_WINDOW_MINUTES)
+
+    for end_index in range(
+        FAILED_LOGIN_THRESHOLD - 1,
+        len(parsed_timestamps),
+    ):
+        start_index = end_index - FAILED_LOGIN_THRESHOLD + 1
+
+        start_time = parsed_timestamps[start_index][0]
+        end_time = parsed_timestamps[end_index][0]
+
+        if end_time - start_time <= window:
+            return {
+                "timestamp": parsed_timestamps[end_index][1],
+                "window_start": parsed_timestamps[start_index][1],
+                "window_end": parsed_timestamps[end_index][1],
+            }
+
+    return None
+
+
 def collect_analysis(lines):
     """Analyze log entries without reading files or printing output."""
     severity_counts = Counter()
     source_ip_counts = Counter()
     failed_login_counts = Counter()
     failed_login_timestamps = {}
-    threshold_timestamps = {}
     malformed_entries = []
     alerts = []
     total_events = 0
@@ -177,14 +213,9 @@ def collect_analysis(lines):
             failed_login_counts[ip_address] += 1
 
             if timestamp:
-                failed_login_timestamps[ip_address] = timestamp
-
-            if (
-                failed_login_counts[ip_address]
-                == FAILED_LOGIN_THRESHOLD
-                and timestamp
-            ):
-                threshold_timestamps[ip_address] = timestamp
+                failed_login_timestamps.setdefault(ip_address, []).append(
+                    timestamp
+                )
 
         if "unauthorized access" in normalized_entry:
             alerts.append(
@@ -201,28 +232,67 @@ def collect_analysis(lines):
                 )
             )
 
-    for ip_address, count in sorted(failed_login_counts.items()):
-        if count >= FAILED_LOGIN_THRESHOLD:
-            alert_timestamp = threshold_timestamps.get(
-                ip_address,
-                failed_login_timestamps.get(ip_address),
-            )
+    for ip_address, total_count in sorted(failed_login_counts.items()):
+        if total_count < FAILED_LOGIN_THRESHOLD:
+            continue
 
+        timestamped_attempts = failed_login_timestamps.get(
+            ip_address, []
+        )
+
+        threshold_event = None
+
+        if len(timestamped_attempts) >= FAILED_LOGIN_THRESHOLD:
+            threshold_event = find_threshold_event(timestamped_attempts)
+
+        if threshold_event:
             alerts.append(
                 create_alert(
                     alert_type="repeated_failed_logins",
                     severity="HIGH",
                     source_ip=ip_address,
                     message=(
-                        f"{ip_address} generated {count} "
-                        "failed login attempts."
+                        f"{ip_address} generated {total_count} "
+                        "failed login attempts in the analyzed log."
+                    ),
+                    explanation=(
+                        f"At least {FAILED_LOGIN_THRESHOLD} timestamped "
+                        f"failed logins occurred within "
+                        f"{FAILED_LOGIN_WINDOW_MINUTES} minutes. "
+                        "Investigate the source and surrounding events."
+                    ),
+                    timestamp=threshold_event["timestamp"],
+                    count=total_count,
+                    threshold=FAILED_LOGIN_THRESHOLD,
+                    window_minutes=FAILED_LOGIN_WINDOW_MINUTES,
+                    window_start=threshold_event["window_start"],
+                    window_end=threshold_event["window_end"],
+                )
+            )
+
+        elif not timestamped_attempts:
+            # Compatibility fallback for legacy logs without timestamps.
+            # This is not equivalent to verified time-window detection.
+            alerts.append(
+                create_alert(
+                    alert_type="repeated_failed_logins",
+                    severity="HIGH",
+                    source_ip=ip_address,
+                    message=(
+                        f"{ip_address} generated {total_count} "
+                        "failed login attempts, but timestamps are unavailable."
                     ),
                     explanation=(
                         f"The source reached the threshold of "
-                        f"{FAILED_LOGIN_THRESHOLD} failed login attempts."
+                        f"{FAILED_LOGIN_THRESHOLD} failures across the log. "
+                        "A time-window check could not be performed because "
+                        "timestamps were unavailable."
                     ),
-                    timestamp=alert_timestamp,
-                    count=count,
+                    timestamp=None,
+                    count=total_count,
+                    threshold=FAILED_LOGIN_THRESHOLD,
+                    window_minutes=None,
+                    timestamp_quality="unavailable",
                 )
             )
 
