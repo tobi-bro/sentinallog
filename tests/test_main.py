@@ -1,5 +1,5 @@
-
 import json
+import re
 
 import pytest
 
@@ -131,6 +131,39 @@ def test_unauthorized_access_detection():
 
     assert alert["severity"] == "HIGH"
     assert alert["source_ip"] == "198.51.100.42"
+
+
+def test_security_alert_contains_timestamp_and_unique_id():
+    lines = [
+        "2026-10-10 10:17:00 ERROR Unauthorized access attempt from 198.51.100.42"
+    ]
+
+    results = collect_analysis(lines)
+
+    alert = next(
+        alert for alert in results["alerts"]
+        if alert["type"] == "unauthorized_access_event"
+    )
+
+    assert alert["timestamp"] == "2026-10-10 10:17:00"
+    assert isinstance(alert["alert_id"], str)
+    assert re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        alert["alert_id"],
+    )
+
+
+def test_each_alert_has_a_unique_id():
+    lines = [
+        "2026-10-10 10:17:00 ERROR Unauthorized access from 198.51.100.42",
+        "2026-10-10 10:18:00 ERROR Unauthorized access from 198.51.100.43",
+    ]
+
+    results = collect_analysis(lines)
+    alert_ids = [alert["alert_id"] for alert in results["alerts"]]
+
+    assert len(alert_ids) == 2
+    assert len(set(alert_ids)) == 2
 
 
 def test_normal_messages_do_not_generate_alerts():

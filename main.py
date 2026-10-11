@@ -1,14 +1,14 @@
-
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 import re
+import uuid
 
 from reports.report_generator import save_json_report
 
 
 APP_NAME = "SentinelLog"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 LOG_FILE = Path("logs/sample.log")
 
 LOG_LEVELS = ("INFO", "WARNING", "ERROR", "UNKNOWN")
@@ -65,22 +65,58 @@ def get_log_level(line):
         message = timestamp_match.group(2)
 
         try:
-            datetime.strptime(
-                timestamp_text,
-                "%Y-%m-%d %H:%M:%S",
-            )
+            datetime.strptime(timestamp_text, "%Y-%m-%d %H:%M:%S")
         except ValueError:
             return "UNKNOWN"
 
         level_match = LOG_LEVEL_PATTERN.match(message)
         return level_match.group(1).upper() if level_match else "UNKNOWN"
 
-    # Do not accept malformed timestamped entries as untimestamped logs.
     if DATE_PREFIX_PATTERN.match(line):
         return "UNKNOWN"
 
     level_match = LOG_LEVEL_PATTERN.match(line)
     return level_match.group(1).upper() if level_match else "UNKNOWN"
+
+
+def extract_timestamp(line):
+    """Return a validated timestamp, or None if unavailable."""
+    timestamp_match = TIMESTAMP_PATTERN.match(line)
+
+    if not timestamp_match:
+        return None
+
+    timestamp_text = timestamp_match.group(1).replace("T", " ")
+
+    try:
+        parsed = datetime.strptime(timestamp_text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def create_alert(
+    alert_type,
+    severity,
+    source_ip,
+    message,
+    explanation,
+    timestamp=None,
+    **extra_fields,
+):
+    """Create a security alert with a unique identifier."""
+    alert = {
+        "alert_id": str(uuid.uuid4()),
+        "timestamp": timestamp,
+        "severity": severity,
+        "type": alert_type,
+        "source_ip": source_ip,
+        "message": message,
+        "explanation": explanation,
+    }
+    alert.update(extra_fields)
+    return alert
 
 
 def extract_ip(line):
@@ -97,28 +133,20 @@ def extract_ip(line):
     except ValueError:
         return None
 
-    if len(octets) != 4:
-        return None
-
-    if not all(0 <= octet <= 255 for octet in octets):
+    if len(octets) != 4 or not all(0 <= octet <= 255 for octet in octets):
         return None
 
     return ip_address
 
 
 def collect_analysis(lines):
-    """
-    Analyze application log entries.
-
-    This function does not read files or print output, making it easier
-    to test independently.
-    """
+    """Analyze log entries without reading files or printing output."""
     severity_counts = Counter()
     source_ip_counts = Counter()
     failed_login_counts = Counter()
+    failed_login_timestamps = {}
     malformed_entries = []
     alerts = []
-
     total_events = 0
 
     for line in lines:
@@ -129,6 +157,7 @@ def collect_analysis(lines):
         entry = line.strip()
         normalized_entry = entry.lower()
 
+        timestamp = extract_timestamp(entry)
         level = get_log_level(entry)
         severity_counts[level] += 1
 
@@ -142,35 +171,43 @@ def collect_analysis(lines):
 
         if "failed login" in normalized_entry and ip_address:
             failed_login_counts[ip_address] += 1
+            if timestamp:
+                failed_login_timestamps[ip_address] = timestamp
 
         if "unauthorized access" in normalized_entry:
-            alerts.append({
-                "severity": "HIGH",
-                "type": "unauthorized_access_event",
-                "source_ip": ip_address,
-                "message": entry,
-                "explanation": (
-                    "An unauthorized-access indicator was found. "
-                    "Investigate the event and surrounding context."
-                ),
-            })
+            alerts.append(
+                create_alert(
+                    alert_type="unauthorized_access_event",
+                    severity="HIGH",
+                    source_ip=ip_address,
+                    message=entry,
+                    explanation=(
+                        "An unauthorized-access indicator was found. "
+                        "Investigate the event and surrounding context."
+                    ),
+                    timestamp=timestamp,
+                )
+            )
 
-    # Generate an alert when an IP reaches the configured threshold.
     for ip_address, count in sorted(failed_login_counts.items()):
         if count >= FAILED_LOGIN_THRESHOLD:
-            alerts.append({
-                "severity": "HIGH",
-                "type": "repeated_failed_logins",
-                "source_ip": ip_address,
-                "count": count,
-                "message": (
-                    f"{ip_address} generated {count} failed login attempts."
-                ),
-                "explanation": (
-                    f"The source reached the threshold of "
-                    f"{FAILED_LOGIN_THRESHOLD} failed login attempts."
-                ),
-            })
+            alerts.append(
+                create_alert(
+                    alert_type="repeated_failed_logins",
+                    severity="HIGH",
+                    source_ip=ip_address,
+                    message=(
+                        f"{ip_address} generated {count} "
+                        "failed login attempts."
+                    ),
+                    explanation=(
+                        f"The source reached the threshold of "
+                        f"{FAILED_LOGIN_THRESHOLD} failed login attempts."
+                    ),
+                    timestamp=failed_login_timestamps.get(ip_address),
+                    count=count,
+                )
+            )
 
     return {
         "total_events": total_events,
@@ -194,7 +231,6 @@ def print_analysis_report(results):
         print(f"{level}: {count}")
 
     print("\n--- FAILED LOGIN SUMMARY ---")
-
     if results["failed_login_counts"]:
         for ip_address, count in sorted(
             results["failed_login_counts"].items(),
@@ -205,7 +241,6 @@ def print_analysis_report(results):
         print("No failed login attempts with identifiable IP addresses.")
 
     print("\n--- UNKNOWN / MALFORMED ENTRIES ---")
-
     if results["malformed_entries"]:
         for entry in results["malformed_entries"]:
             print(f"[UNKNOWN] {entry}")
@@ -213,12 +248,13 @@ def print_analysis_report(results):
         print("No unknown-severity entries found.")
 
     print("\n--- SECURITY ALERTS ---")
-
     if results["alerts"]:
         for alert in results["alerts"]:
             print(
-                f"[{alert['severity']}] "
-                f"{alert['type']}: {alert['message']}"
+                f"[{alert['severity']}] {alert['type']} | "
+                f"ID: {alert['alert_id']} | "
+                f"Time: {alert['timestamp'] or 'Unavailable'} | "
+                f"{alert['message']}"
             )
     else:
         print("No events matched the current alert rules.")
@@ -254,7 +290,6 @@ def view_statistics():
         return
 
     results = collect_analysis(lines)
-
     print("\n--- LOG STATISTICS ---")
     print(f"Total entries: {results['total_events']}")
 
@@ -262,7 +297,6 @@ def view_statistics():
         print(f"{level}: {count}")
 
     print("\n--- MOST FREQUENT SOURCE IPs ---")
-
     ip_counts = results["source_ip_counts"]
 
     if ip_counts:
@@ -283,7 +317,6 @@ def view_alerts():
         return
 
     results = collect_analysis(lines)
-
     print("\n--- SECURITY ALERTS ---")
 
     if not results["alerts"]:
@@ -291,8 +324,11 @@ def view_alerts():
     else:
         for alert in results["alerts"]:
             print(
-                f"[{alert['severity']}] "
-                f"{alert['type']}: {alert['message']}"
+                f"[{alert['severity']}] {alert['type']} | "
+                f"ID: {alert['alert_id']} | "
+                f"Time: {alert['timestamp'] or 'Unavailable'} | "
+                f"Source IP: {alert['source_ip'] or 'Unknown'} | "
+                f"{alert['message']}"
             )
 
     print(
