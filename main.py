@@ -1,3 +1,4 @@
+
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from reports.report_generator import save_json_report
 
 
 APP_NAME = "SentinelLog"
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 LOG_FILE = Path("logs/sample.log")
 
 LOG_LEVELS = ("INFO", "WARNING", "ERROR", "UNKNOWN")
@@ -133,7 +134,9 @@ def extract_ip(line):
     except ValueError:
         return None
 
-    if len(octets) != 4 or not all(0 <= octet <= 255 for octet in octets):
+    if len(octets) != 4 or not all(
+        0 <= octet <= 255 for octet in octets
+    ):
         return None
 
     return ip_address
@@ -145,6 +148,7 @@ def collect_analysis(lines):
     source_ip_counts = Counter()
     failed_login_counts = Counter()
     failed_login_timestamps = {}
+    threshold_timestamps = {}
     malformed_entries = []
     alerts = []
     total_events = 0
@@ -171,8 +175,16 @@ def collect_analysis(lines):
 
         if "failed login" in normalized_entry and ip_address:
             failed_login_counts[ip_address] += 1
+
             if timestamp:
                 failed_login_timestamps[ip_address] = timestamp
+
+            if (
+                failed_login_counts[ip_address]
+                == FAILED_LOGIN_THRESHOLD
+                and timestamp
+            ):
+                threshold_timestamps[ip_address] = timestamp
 
         if "unauthorized access" in normalized_entry:
             alerts.append(
@@ -191,6 +203,11 @@ def collect_analysis(lines):
 
     for ip_address, count in sorted(failed_login_counts.items()):
         if count >= FAILED_LOGIN_THRESHOLD:
+            alert_timestamp = threshold_timestamps.get(
+                ip_address,
+                failed_login_timestamps.get(ip_address),
+            )
+
             alerts.append(
                 create_alert(
                     alert_type="repeated_failed_logins",
@@ -204,7 +221,7 @@ def collect_analysis(lines):
                         f"The source reached the threshold of "
                         f"{FAILED_LOGIN_THRESHOLD} failed login attempts."
                     ),
-                    timestamp=failed_login_timestamps.get(ip_address),
+                    timestamp=alert_timestamp,
                     count=count,
                 )
             )

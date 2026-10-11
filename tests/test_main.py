@@ -237,3 +237,25 @@ def test_report_generator_rejects_non_dictionary(tmp_path):
         save_json_report([], output_file)
 
     assert not output_file.exists()
+
+
+def test_repeated_failed_login_alert_uses_threshold_timestamp():
+    from main import collect_analysis
+
+    lines = [
+        "2026-10-11 10:00:01 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:00:05 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:00:09 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:00:12 WARNING Failed login from 192.0.2.10",
+    ]
+
+    results = collect_analysis(lines)
+
+    alert = next(
+        alert
+        for alert in results["alerts"]
+        if alert["type"] == "repeated_failed_logins"
+    )
+
+    assert alert["timestamp"] == "2026-10-11 10:00:09"
+    assert alert["count"] == 4
