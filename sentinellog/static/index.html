@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SentinelLog — Security Incident Investigation Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base: #090d16;
+      --bg-card: rgba(17, 24, 39, 0.75);
+      --bg-card-border: rgba(255, 255, 255, 0.08);
+      --bg-card-hover: rgba(31, 41, 55, 0.85);
+      --text-main: #f3f4f6;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+      --primary: #06b6d4;
+      --primary-hover: #0891b2;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.15);
+      --warning: #f59e0b;
+      --warning-bg: rgba(245, 158, 11, 0.15);
+      --success: #10b981;
+      --success-bg: rgba(16, 185, 129, 0.15);
+      --info: #3b82f6;
+      --info-bg: rgba(59, 130, 246, 0.15);
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    /* Top Navigation Header */
+    header {
+      background: rgba(13, 19, 33, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--bg-card-border);
+      padding: 0.875rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .brand-icon {
+      width: 2.25rem;
+      height: 2.25rem;
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      border-radius: 0.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: #fff;
+      box-shadow: 0 0 16px rgba(6, 182, 212, 0.35);
+    }
+
+    .brand-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-version {
+      font-size: 0.75rem;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--primary);
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      font-family: var(--font-mono);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .btn {
+      padding: 0.5rem 1rem;
+      border-radius: 0.375rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+      outline: none;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: #090d16;
+      font-weight: 600;
+    }
+
+    .btn-primary:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      border-color: var(--bg-card-border);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      padding: 1.5rem 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    /* KPI Metrics Row */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--bg-card-border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(6, 182, 212, 0.3);
+    }
+
+    .kpi-label {
+      font-size: 0.8125rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .kpi-value {
+      font-size: 2rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: #fff;
+    }
+
+    .kpi-sub {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+
+    /* Severity Breakdown Bar */
+    .section-card {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-card-border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .severity-bars {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .sev-pill {
+      flex: 1;
+      min-width: 140px;
+      padding: 0.75rem 1rem;
+      border-radius: 0.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border: 1px solid transparent;
+    }
+
+    .sev-info { background: var(--info-bg); border-color: rgba(59, 130, 246, 0.3); color: #60a5fa; }
+    .sev-warning { background: var(--warning-bg); border-color: rgba(245, 158, 11, 0.3); color: #fbbf24; }
+    .sev-error { background: var(--danger-bg); border-color: rgba(239, 68, 68, 0.3); color: #f87171; }
+    .sev-unknown { background: rgba(156, 163, 175, 0.1); border-color: rgba(156, 163, 175, 0.3); color: #9ca3af; }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--bg-card-border);
+      margin-bottom: 1.25rem;
+    }
+
+    .tab-btn {
+      padding: 0.65rem 1.25rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-muted);
+      font-size: 0.9375rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover {
+      color: var(--text-main);
+    }
+
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 600;
+    }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-input, .filter-select {
+      background: rgba(17, 24, 39, 0.9);
+      border: 1px solid var(--bg-card-border);
+      color: var(--text-main);
+      padding: 0.5rem 0.875rem;
+      border-radius: 0.375rem;
+      font-size: 0.875rem;
+      outline: none;
+    }
+
+    .filter-input:focus, .filter-select:focus {
+      border-color: var(--primary);
+    }
+
+    /* Incident Cards */
+    .incident-list {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .incident-card {
+      background: var(--bg-card);
+      border: 1px solid var(--bg-card-border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      transition: border-color 0.2s ease;
+    }
+
+    .incident-card:hover {
+      border-color: rgba(6, 182, 212, 0.4);
+    }
+
+    .incident-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.2rem 0.6rem;
+      border-radius: 0.25rem;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+    }
+
+    .badge-critical { background: #e11d48; color: #fff; }
+    .badge-high { background: #ef4444; color: #fff; }
+    .badge-medium { background: #f59e0b; color: #090d16; }
+    .badge-low { background: #10b981; color: #090d16; }
+
+    .incident-id {
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .incident-ip {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .incident-timespan {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+    }
+
+    .timeline-container {
+      background: rgba(0, 0, 0, 0.25);
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      margin-top: 0.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .timeline-item {
+      display: flex;
+      gap: 1rem;
+      font-size: 0.8125rem;
+      padding: 0.35rem 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .timeline-item:last-child {
+      border-bottom: none;
+    }
+
+    .timeline-time {
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .timeline-desc {
+      color: var(--text-main);
+    }
+
+    /* Table */
+    .data-table-container {
+      overflow-x: auto;
+      border-radius: 0.5rem;
+      border: 1px solid var(--bg-card-border);
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.875rem;
+    }
+
+    .data-table th {
+      background: rgba(17, 24, 39, 0.95);
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--bg-card-border);
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.05em;
+    }
+
+    .data-table td {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .data-table tr:hover {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .modal-box {
+      background: #111827;
+      border: 1px solid var(--bg-card-border);
+      border-radius: 0.75rem;
+      max-width: 600px;
+      width: 90%;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .upload-zone {
+      border: 2px dashed rgba(6, 182, 212, 0.4);
+      border-radius: 0.5rem;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .upload-zone:hover {
+      border-color: var(--primary);
+      background: rgba(6, 182, 212, 0.05);
+    }
+
+    footer {
+      border-top: 1px solid var(--bg-card-border);
+      padding: 1rem 2rem;
+      text-align: center;
+      font-size: 0.8125rem;
+      color: var(--text-dim);
+      background: rgba(13, 19, 33, 0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <div class="brand-icon">S</div>
+      <div>
+        <div class="brand-title">SentinelLog</div>
+      </div>
+      <span class="brand-version">v2.4.0</span>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" onclick="loadDefaultData()">Load Demo Logs</button>
+      <button class="btn btn-secondary" onclick="openUploadModal()">Upload Log File</button>
+      <button class="btn btn-primary" onclick="exportReportJson()">Export JSON Report</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- KPI Summary Row -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-label">Total Log Events</span>
+        <div class="kpi-value" id="kpi-events">0</div>
+        <span class="kpi-sub">Analyzed input records</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Security Alerts</span>
+        <div class="kpi-value" id="kpi-alerts" style="color: #f87171;">0</div>
+        <span class="kpi-sub">Rule-triggered indicators</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Correlated Incidents</span>
+        <div class="kpi-value" id="kpi-incidents" style="color: #fbbf24;">0</div>
+        <span class="kpi-sub">Bounded time clusters (5m)</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-label">Monitored IPs</span>
+        <div class="kpi-value" id="kpi-ips" style="color: #60a5fa;">0</div>
+        <span class="kpi-sub">Distinct source addresses</span>
+      </div>
+    </div>
+
+    <!-- Severity Distribution -->
+    <div class="section-card">
+      <div class="section-header">
+        <div class="section-title">Log Severity Breakdown</div>
+      </div>
+      <div class="severity-bars">
+        <div class="sev-pill sev-info">
+          <span>INFO</span>
+          <strong id="sev-info-count">0</strong>
+        </div>
+        <div class="sev-pill sev-warning">
+          <span>WARNING</span>
+          <strong id="sev-warning-count">0</strong>
+        </div>
+        <div class="sev-pill sev-error">
+          <span>ERROR</span>
+          <strong id="sev-error-count">0</strong>
+        </div>
+        <div class="sev-pill sev-unknown">
+          <span>UNKNOWN</span>
+          <strong id="sev-unknown-count">0</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabbed Navigation -->
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-btn-incidents" onclick="switchTab('incidents')">Correlated Incidents</button>
+      <button class="tab-btn" id="tab-btn-alerts" onclick="switchTab('alerts')">Security Alerts</button>
+      <button class="tab-btn" id="tab-btn-talkers" onclick="switchTab('talkers')">Top Talkers (IPs)</button>
+    </div>
+
+    <!-- Tab 1: Incidents View -->
+    <div id="tab-incidents">
+      <div class="filter-bar">
+        <input type="text" id="inc-search-ip" class="filter-input" placeholder="Filter by Source IP..." oninput="renderIncidents()">
+        <select id="inc-filter-sev" class="filter-select" onchange="renderIncidents()">
+          <option value="ALL">All Severities</option>
+          <option value="CRITICAL">CRITICAL</option>
+          <option value="HIGH">HIGH</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="LOW">LOW</option>
+        </select>
+      </div>
+      <div class="incident-list" id="incident-container">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Tab 2: Alerts View -->
+    <div id="tab-alerts" style="display: none;">
+      <div class="data-table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Type</th>
+              <th>Source IP</th>
+              <th>Timestamp</th>
+              <th>Message</th>
+              <th>Alert ID</th>
+            </tr>
+          </thead>
+          <tbody id="alert-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab 3: Top Talkers -->
+    <div id="tab-talkers" style="display: none;">
+      <div class="data-table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Source IPv4</th>
+              <th>Total Log Entries</th>
+              <th>Failed Logins</th>
+            </tr>
+          </thead>
+          <tbody id="talkers-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Upload Modal -->
+  <div class="modal-overlay" id="upload-modal">
+    <div class="modal-box">
+      <h3>Upload Log File for Triage</h3>
+      <p style="font-size: 0.875rem; color: var(--text-muted);">
+        Select or drop a plain text application log file (max 50 MB) for automated security triage.
+      </p>
+      <div class="upload-zone" onclick="document.getElementById('file-input').click()">
+        <div>📁 Click to choose log file or drag & drop</div>
+        <input type="file" id="file-input" style="display: none;" onchange="handleFileUpload(event)">
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+        <button class="btn btn-secondary" onclick="closeUploadModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    SentinelLog Security Analyzer — Rule-based indicator investigation platform. Correlated indicators require analyst triage.
+  </footer>
+
+  <script>
+    let currentData = {
+      total_events: 0,
+      severity_counts: { INFO: 0, WARNING: 0, ERROR: 0, UNKNOWN: 0 },
+      source_ip_counts: {},
+      failed_login_counts: {},
+      alerts: [],
+      incidents: []
+    };
+
+    // Load initial sample data on page load
+    window.addEventListener('DOMContentLoaded', () => {
+      loadDefaultData();
+    });
+
+    async function loadDefaultData() {
+      try {
+        const res = await fetch('/api/v1/reports/latest');
+        if (res.ok) {
+          const report = await res.json();
+          currentData = report.results || report;
+          updateDashboard();
+        } else {
+          loadSyntheticDemo();
+        }
+      } catch (e) {
+        loadSyntheticDemo();
+      }
+    }
+
+    function loadSyntheticDemo() {
+      currentData = {
+        total_events: 7,
+        severity_counts: { INFO: 2, WARNING: 3, ERROR: 2, UNKNOWN: 0 },
+        source_ip_counts: { "203.0.113.25": 3, "198.51.100.42": 1, "192.168.1.10": 1, "192.168.1.15": 1 },
+        failed_login_counts: { "203.0.113.25": 3 },
+        alerts: [
+          {
+            alert_id: "demo-a1",
+            type: "repeated_failed_logins",
+            severity: "HIGH",
+            source_ip: "203.0.113.25",
+            timestamp: "2026-10-10 10:16:01",
+            message: "203.0.113.25 generated 3 failed login attempts in the analyzed log."
+          },
+          {
+            alert_id: "demo-a2",
+            type: "unauthorized_access_event",
+            severity: "HIGH",
+            source_ip: "198.51.100.42",
+            timestamp: "2026-10-10 10:17:00",
+            message: "2026-10-10 10:17:00 ERROR Unauthorized access attempt from 198.51.100.42"
+          }
+        ],
+        incidents: [
+          {
+            incident_id: "inc-demo-01",
+            source_ip: "203.0.113.25",
+            severity: "HIGH",
+            first_seen: "2026-10-10 10:16:01",
+            last_seen: "2026-10-10 10:16:01",
+            alert_count: 1,
+            correlation_reasons: [
+              "Correlated 1 security alert(s) from source IP 203.0.113.25 within 5 minutes.",
+              "Alert types observed: repeated_failed_logins."
+            ],
+            timeline: [
+              { timestamp: "2026-10-10 10:16:01", type: "repeated_failed_logins", message: "3 failed logins observed" }
+            ]
+          },
+          {
+            incident_id: "inc-demo-02",
+            source_ip: "198.51.100.42",
+            severity: "HIGH",
+            first_seen: "2026-10-10 10:17:00",
+            last_seen: "2026-10-10 10:17:00",
+            alert_count: 1,
+            correlation_reasons: [
+              "Correlated 1 security alert(s) from source IP 198.51.100.42 within 5 minutes.",
+              "Alert types observed: unauthorized_access_event."
+            ],
+            timeline: [
+              { timestamp: "2026-10-10 10:17:00", type: "unauthorized_access_event", message: "Unauthorized access attempt" }
+            ]
+          }
+        ]
+      };
+      updateDashboard();
+    }
+
+    function updateDashboard() {
+      document.getElementById('kpi-events').innerText = currentData.total_events || 0;
+      document.getElementById('kpi-alerts').innerText = (currentData.alerts || []).length;
+      document.getElementById('kpi-incidents').innerText = (currentData.incidents || []).length;
+      document.getElementById('kpi-ips').innerText = Object.keys(currentData.source_ip_counts || {}).length;
+
+      const sc = currentData.severity_counts || {};
+      document.getElementById('sev-info-count').innerText = sc.INFO || 0;
+      document.getElementById('sev-warning-count').innerText = sc.WARNING || 0;
+      document.getElementById('sev-error-count').innerText = sc.ERROR || 0;
+      document.getElementById('sev-unknown-count').innerText = sc.UNKNOWN || 0;
+
+      renderIncidents();
+      renderAlerts();
+      renderTalkers();
+    }
+
+    function renderIncidents() {
+      const container = document.getElementById('incident-container');
+      const searchIp = (document.getElementById('inc-search-ip').value || '').trim();
+      const filterSev = document.getElementById('inc-filter-sev').value;
+
+      let incidents = currentData.incidents || [];
+      if (searchIp) {
+        incidents = incidents.filter(i => i.source_ip && i.source_ip.includes(searchIp));
+      }
+      if (filterSev !== 'ALL') {
+        incidents = incidents.filter(i => i.severity === filterSev);
+      }
+
+      if (incidents.length === 0) {
+        container.innerHTML = '<div style="color: var(--text-muted); padding: 2rem; text-align: center;">No incidents match the active filters.</div>';
+        return;
+      }
+
+      container.innerHTML = incidents.map(inc => `
+        <div class="incident-card">
+          <div class="incident-head">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <span class="badge badge-${(inc.severity || 'low').toLowerCase()}">${inc.severity}</span>
+              <span class="incident-ip">${inc.source_ip}</span>
+            </div>
+            <span class="incident-id">ID: ${inc.incident_id}</span>
+          </div>
+          <div class="incident-timespan">
+            <strong>Timespan:</strong> ${inc.first_seen} &rarr; ${inc.last_seen} (${inc.alert_count} alert${inc.alert_count > 1 ? 's' : ''})
+          </div>
+          <div style="font-size: 0.8125rem; color: var(--text-muted);">
+            ${(inc.correlation_reasons || []).map(r => `<div>&bull; ${r}</div>`).join('')}
+          </div>
+          ${inc.timeline && inc.timeline.length ? `
+            <div class="timeline-container">
+              <strong style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted);">Incident Evidence Timeline</strong>
+              ${inc.timeline.map(t => `
+                <div class="timeline-item">
+                  <span class="timeline-time">${t.timestamp || 'N/A'}</span>
+                  <span class="timeline-desc">[${t.type}] ${t.message || ''}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+        </div>
+      `).join('');
+    }
+
+    function renderAlerts() {
+      const tbody = document.getElementById('alert-tbody');
+      const alerts = currentData.alerts || [];
+
+      if (alerts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No security alerts identified.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = alerts.map(a => `
+        <tr>
+          <td><span class="badge badge-${(a.severity || 'low').toLowerCase()}">${a.severity}</span></td>
+          <td>${a.type}</td>
+          <td style="font-family: var(--font-mono); color: var(--primary);">${a.source_ip || 'None'}</td>
+          <td style="font-family: var(--font-mono); font-size: 0.8125rem;">${a.timestamp || 'Unavailable'}</td>
+          <td style="font-size: 0.8125rem;">${a.message}</td>
+          <td style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim);">${(a.alert_id || '').substring(0, 8)}...</td>
+        </tr>
+      `).join('');
+    }
+
+    function renderTalkers() {
+      const tbody = document.getElementById('talkers-tbody');
+      const ips = currentData.source_ip_counts || {};
+      const failed = currentData.failed_login_counts || {};
+
+      const sorted = Object.entries(ips).sort((a, b) => b[1] - a[1]);
+      if (sorted.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--text-muted);">No IP addresses observed.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = sorted.map(([ip, count]) => `
+        <tr>
+          <td style="font-family: var(--font-mono); color: var(--primary);">${ip}</td>
+          <td>${count} event(s)</td>
+          <td>${failed[ip] ? `<span style="color: #f87171; font-weight: 600;">${failed[ip]} failure(s)</span>` : '<span style="color: var(--text-dim);">0</span>'}</td>
+        </tr>
+      `).join('');
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.getElementById(`tab-btn-${tab}`).classList.add('active');
+
+      document.getElementById('tab-incidents').style.display = tab === 'incidents' ? 'block' : 'none';
+      document.getElementById('tab-alerts').style.display = tab === 'alerts' ? 'block' : 'none';
+      document.getElementById('tab-talkers').style.display = tab === 'talkers' ? 'block' : 'none';
+    }
+
+    function openUploadModal() {
+      document.getElementById('upload-modal').style.display = 'flex';
+    }
+
+    function closeUploadModal() {
+      document.getElementById('upload-modal').style.display = 'none';
+    }
+
+    async function handleFileUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/v1/analyze/upload', {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          currentData = await res.json();
+          updateDashboard();
+          closeUploadModal();
+        } else {
+          alert('Failed to analyze uploaded log: ' + (await res.text()));
+        }
+      } catch (err) {
+        alert('Upload failed: ' + err.message);
+      }
+    }
+
+    function exportReportJson() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentData, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `sentinellog_report_${new Date().toISOString().slice(0, 10)}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+  </script>
+</body>
+</html>

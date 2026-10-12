@@ -1,0 +1,6 @@
+warning: in the working copy of '.github/workflows/tests.yml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'main.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'reports/report_generator.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'requirements.txt', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_main.py', LF will be replaced by CRLF the next time Git touches it

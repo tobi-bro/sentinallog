@@ -1,10 +1,14 @@
 
+import copy
 import json
+
+import pytest
 
 from main import (
     FAILED_LOGIN_THRESHOLD,
     FAILED_LOGIN_WINDOW_MINUTES,
     collect_analysis,
+    correlate_alerts,
     create_alert,
     extract_ip,
     extract_timestamp,
@@ -204,8 +208,6 @@ def test_unknown_entries_saved_to_json(tmp_path):
 
 
 def test_report_generator_rejects_non_dictionary():
-    import pytest
-
     with pytest.raises(TypeError):
         save_json_report(["not", "a", "dictionary"])
 
@@ -345,3 +347,411 @@ def test_create_alert_preserves_extra_fields():
     assert alert["type"] == "test_alert"
     assert alert["count"] == 3
     assert alert["alert_id"]
+
+
+# =====================================================================
+# Phase 3: Incident Correlation & Advanced Reporting Tests
+# =====================================================================
+
+
+def test_correlate_alerts_empty():
+    assert correlate_alerts([]) == []
+
+
+def test_correlate_alerts_invalid_window_raises():
+    alert = {
+        "alert_id": "a1",
+        "timestamp": "2026-10-11 10:00:00",
+        "severity": "HIGH",
+        "type": "unauthorized_access_event",
+        "source_ip": "192.0.2.10",
+        "message": "Test alert",
+    }
+    with pytest.raises(ValueError):
+        correlate_alerts([alert], window_minutes=0)
+    with pytest.raises(ValueError):
+        correlate_alerts([alert], window_minutes=-5)
+    with pytest.raises(TypeError):
+        correlate_alerts([alert], window_minutes="five")
+
+
+def test_correlate_alerts_invalid_alerts_type_raises():
+    with pytest.raises(TypeError):
+        correlate_alerts("not-a-list")
+
+
+def test_correlate_alerts_single_eligible_alert():
+    alert = {
+        "alert_id": "a1",
+        "timestamp": "2026-10-11 10:00:00",
+        "severity": "HIGH",
+        "type": "unauthorized_access_event",
+        "source_ip": "192.0.2.10",
+        "message": "Test alert 1",
+    }
+    incidents = correlate_alerts([alert])
+    assert len(incidents) == 1
+    inc = incidents[0]
+    assert inc["incident_id"]
+    assert inc["source_ip"] == "192.0.2.10"
+    assert inc["first_seen"] == "2026-10-11 10:00:00"
+    assert inc["last_seen"] == "2026-10-11 10:00:00"
+    assert inc["severity"] == "HIGH"
+    assert inc["alert_ids"] == ["a1"]
+    assert inc["alert_count"] == 1
+    assert len(inc["evidence"]) == 1
+    assert len(inc["correlation_reasons"]) > 0
+
+
+def test_correlate_alerts_within_five_minute_window():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 1",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:04:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts, window_minutes=5)
+    assert len(incidents) == 1
+    inc = incidents[0]
+    assert inc["source_ip"] == "192.0.2.10"
+    assert inc["first_seen"] == "2026-10-11 10:00:00"
+    assert inc["last_seen"] == "2026-10-11 10:04:00"
+    assert inc["alert_ids"] == ["a1", "a2"]
+    assert inc["alert_count"] == 2
+
+
+def test_correlate_alerts_exact_boundary():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 1",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:05:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts, window_minutes=5)
+    assert len(incidents) == 1
+    assert incidents[0]["alert_count"] == 2
+    assert incidents[0]["alert_ids"] == ["a1", "a2"]
+
+
+def test_correlate_alerts_outside_window():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 1",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:05:01",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Test alert 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts, window_minutes=5)
+    assert len(incidents) == 2
+    assert incidents[0]["alert_ids"] == ["a1"]
+    assert incidents[1]["alert_ids"] == ["a2"]
+
+
+def test_correlate_alerts_bounded_window_prevents_chaining():
+    # Events at 10:00, 10:04, 10:07.
+    # Naive chaining would cluster all three because 10:04 is <=5m from 10:00, and 10:07 is <=5m from 10:04.
+    # But 10:07 is 7m away from the start (10:00).
+    # Strict bounded rule clusters [10:00, 10:04] and starts a new incident for [10:07].
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 1",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:04:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 2",
+        },
+        {
+            "alert_id": "a3",
+            "timestamp": "2026-10-11 10:07:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 3",
+        },
+    ]
+    incidents = correlate_alerts(alerts, window_minutes=5)
+    assert len(incidents) == 2
+    assert incidents[0]["alert_ids"] == ["a1", "a2"]
+    assert incidents[1]["alert_ids"] == ["a3"]
+
+
+def test_correlate_alerts_different_ips_remain_separate():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert from IP 1",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.20",
+            "message": "Alert from IP 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts, window_minutes=5)
+    assert len(incidents) == 2
+    assert {inc["source_ip"] for inc in incidents} == {"192.0.2.10", "192.0.2.20"}
+
+
+def test_correlate_alerts_missing_or_invalid_ip_uncorrelated():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": None,
+            "message": "No IP",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "999.999.999.999",
+            "message": "Invalid IP",
+        },
+    ]
+    incidents = correlate_alerts(alerts)
+    assert incidents == []
+
+
+def test_correlate_alerts_missing_or_invalid_timestamp_uncorrelated():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": None,
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "No timestamp",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "invalid-timestamp",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Bad timestamp",
+        },
+    ]
+    incidents = correlate_alerts(alerts)
+    assert incidents == []
+
+
+def test_correlate_alerts_preserves_input_immutability():
+    original_alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 1",
+            "tags": ["initial"],
+        }
+    ]
+    snapshot = copy.deepcopy(original_alerts)
+    correlate_alerts(original_alerts)
+    assert original_alerts == snapshot
+
+
+def test_correlate_alerts_preserves_alert_ids():
+    alerts = [
+        {
+            "alert_id": "uuid-special-1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 1",
+        },
+        {
+            "alert_id": "uuid-special-2",
+            "timestamp": "2026-10-11 10:02:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts)
+    assert incidents[0]["alert_ids"] == ["uuid-special-1", "uuid-special-2"]
+
+
+def test_correlate_alerts_severity_hierarchy():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "LOW",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Low severity",
+        },
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:02:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "High severity",
+        },
+    ]
+    incidents = correlate_alerts(alerts)
+    assert incidents[0]["severity"] == "HIGH"
+
+
+def test_correlate_alerts_evidence_and_reasons():
+    alerts = [
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Auth failure",
+        }
+    ]
+    incidents = correlate_alerts(alerts)
+    inc = incidents[0]
+    assert isinstance(inc["evidence"], list)
+    assert inc["evidence"][0]["alert_id"] == "a1"
+    assert isinstance(inc["correlation_reasons"], list)
+    assert any("192.0.2.10" in reason for reason in inc["correlation_reasons"])
+    assert any("investigat" in reason.lower() for reason in inc["correlation_reasons"])
+
+
+def test_correlate_alerts_deterministic_grouping():
+    alerts = [
+        {
+            "alert_id": "a2",
+            "timestamp": "2026-10-11 10:02:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 2",
+        },
+        {
+            "alert_id": "a1",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Alert 1",
+        },
+    ]
+    res1 = correlate_alerts(alerts)
+    res2 = correlate_alerts(alerts)
+    assert res1[0]["alert_ids"] == res2[0]["alert_ids"]
+    assert res1[0]["first_seen"] == res2[0]["first_seen"]
+    assert res1[0]["last_seen"] == res2[0]["last_seen"]
+
+
+def test_correlate_alerts_duplicate_alert_ids_handled_safely():
+    alerts = [
+        {
+            "alert_id": "dup-id",
+            "timestamp": "2026-10-11 10:00:00",
+            "severity": "HIGH",
+            "type": "unauthorized_access_event",
+            "source_ip": "192.0.2.10",
+            "message": "Event 1",
+        },
+        {
+            "alert_id": "dup-id",
+            "timestamp": "2026-10-11 10:01:00",
+            "severity": "HIGH",
+            "type": "repeated_failed_logins",
+            "source_ip": "192.0.2.10",
+            "message": "Event 2",
+        },
+    ]
+    incidents = correlate_alerts(alerts)
+    assert len(incidents) == 1
+    assert incidents[0]["alert_count"] == 2
+    assert len(incidents[0]["evidence"]) == 2
+
+
+def test_collect_analysis_integrates_incidents():
+    lines = [
+        "2026-10-11 10:00:00 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:01:00 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:02:00 WARNING Failed login from 192.0.2.10",
+        "2026-10-11 10:03:00 ERROR Unauthorized access from 192.0.2.10",
+    ]
+    results = collect_analysis(lines)
+    assert "incidents" in results
+    assert "alerts" in results
+    assert len(results["alerts"]) == 2
+    assert len(results["incidents"]) == 1
+    inc = results["incidents"][0]
+    assert inc["source_ip"] == "192.0.2.10"
+    assert inc["alert_count"] == 2
+    assert inc["first_seen"] == "2026-10-11 10:02:00"
+    assert inc["last_seen"] == "2026-10-11 10:03:00"
+
+
+def test_incidents_json_serialization(tmp_path):
+    lines = [
+        "2026-10-11 10:00:00 ERROR Unauthorized access from 192.0.2.10",
+        "2026-10-11 10:01:00 ERROR Unauthorized access from 192.0.2.10",
+    ]
+    results = collect_analysis(lines)
+    report_file = tmp_path / "incident_report.json"
+    saved_path = save_json_report(results, report_file)
+    with open(saved_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert "incidents" in data["results"]
+    assert len(data["results"]["incidents"]) == 1
+    assert data["results"]["incidents"][0]["source_ip"] == "192.0.2.10"

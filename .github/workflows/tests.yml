@@ -1,4 +1,3 @@
-
 name: SentinelLog CI
 
 on:
@@ -11,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  test-and-scan:
     name: Tests and Security Scans
     runs-on: ubuntu-latest
 
@@ -32,13 +31,16 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run automated tests
+      - name: Run automated pytest suite
         run: python -m pytest -v
 
-      - name: Run Bandit security scan
+      - name: Run Bandit SAST security scan
         run: |
           python -m bandit -r . \
             -x ./.venv,./.git,./.pytest_cache,./tests
 
-      - name: Audit Python dependencies
+      - name: Audit Python dependencies (pip-audit)
         run: pip-audit -r requirements.txt
+
+      - name: Verify Container Build
+        run: docker build -t sentinellog:ci-test .

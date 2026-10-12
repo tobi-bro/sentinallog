@@ -1,0 +1,33 @@
+# Git repository
+.git/
+.github/
+
+# Python Virtual Environments and Caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test and Lint Caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Secrets and Local Environment
+.env
+.env.*
+!.env.example
+
+# Generated Output and Logs
+reports/*.json
+!reports/.gitkeep
+logs/*.log
+!logs/sample.log
+
+# IDE and OS artifacts
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
